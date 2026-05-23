@@ -74,6 +74,8 @@ services:
     build:
       context: ..
       dockerfile: web_ui/Dockerfile.dev
+      args:
+        NODE_IMAGE: ${WE_MPRSS_FRONTEND_NODE_IMAGE:-m.daocloud.io/library/node:20-slim}
     image: we-mp-rss-frontend:dev
     container_name: we-mp-rss-frontend-dev
     restart: unless-stopped

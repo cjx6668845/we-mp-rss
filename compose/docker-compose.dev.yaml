@@ -48,7 +48,7 @@ services:
       - ../init_sys.py:/app/init_sys.py
       - ../data_sync.py:/app/data_sync.py
       - ../job.py:/app/job.py
-      - ../data:/app/data
+      - ${WE_MPRSS_DATA_DIR:-../data}:/app/data
     depends_on:
       redis:
         condition: service_healthy

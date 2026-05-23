@@ -54,7 +54,7 @@ services:
     ports:
       - "8001:8001"
     volumes:
-      - ./data:/app/data
+      - ${WE_MPRSS_DATA_DIR:-./data}:/app/data
     depends_on:
       - mysql
       - redis

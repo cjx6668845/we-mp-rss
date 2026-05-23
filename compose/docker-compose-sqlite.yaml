@@ -11,7 +11,7 @@ services:
       - USERNAME=admin
       - PASSWORD=admin@123
     volumes:
-      - ./data:/app/data
+      - ${WE_MPRSS_DATA_DIR:-./data}:/app/data
 
 volumes:
   db_data:

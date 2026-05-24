@@ -12,6 +12,7 @@ from urllib.parse import unquote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from bs4.element import Comment, Tag
 
 from core.common.file_tools import sanitize_filename
 from core.config import cfg
@@ -27,6 +28,294 @@ except Exception as exc:  # pragma: no cover - 运行时环境可能未安装该
 _MARKITDOWN_INSTANCE = None
 
 _BG_URL_PATTERN = re.compile(r"url\(\s*['\"]?([^'\"\)]+)['\"]?\s*\)", flags=re.IGNORECASE)
+_MAIN_CONTENT_SELECTORS = (
+    "#js_content",
+    "#js_article #js_content",
+    "div.rich_media_content",
+    "article",
+    "main",
+    "body",
+)
+_DROP_TAGS = {
+    "script",
+    "style",
+    "noscript",
+    "iframe",
+    "form",
+    "button",
+    "input",
+    "select",
+    "option",
+    "canvas",
+    "svg",
+    "path",
+    "video",
+    "audio",
+    "link",
+    "meta",
+}
+_NOISE_ID_CLASS_KEYWORDS = (
+    "js_pc_qr_code",
+    "qr_code",
+    "js_profile_card",
+    "profile_card",
+    "js_novel_card",
+    "js_related_articles",
+    "js_minipro_dialog",
+    "js_toobar",
+    "js_read_area",
+    "reward",
+    "recommend",
+    "js_share",
+    "share_media",
+    "copyright",
+    "js_preview_reward",
+    "discuss",
+    "comment",
+)
+_NOISE_TEXT_PATTERNS = (
+    re.compile(r"^点击关注\s*>?$"),
+    re.compile(r"^去阅读$"),
+    re.compile(r"^原创$"),
+    re.compile(r"^在小说阅读器.*"),
+    re.compile(r"^微信扫一扫.*"),
+    re.compile(r"^预览时标签不可点.*"),
+    re.compile(r"^知道了$"),
+    re.compile(r"^取消$"),
+    re.compile(r"^允许$"),
+    re.compile(r"^继续滑动看下一个$"),
+    re.compile(r"^轻触阅读原文$"),
+    re.compile(r"^向上滑动看下一个$"),
+    re.compile(r"^阅读原文$"),
+    re.compile(r"^分析$"),
+    re.compile(r"^×$"),
+    re.compile(r"^使用完整服务$"),
+)
+_TRAILING_CUTOFF_PATTERNS = (
+    re.compile(r"^欢迎在朋友圈转发.*"),
+    re.compile(r"^微信改版后.*"),
+    re.compile(r"^官方投稿网址[:：].*"),
+)
+_CJK_CHAR_PATTERN = r"\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF"
+
+
+def _is_noise_text(text: str) -> bool:
+    value = (text or "").strip()
+    if not value:
+        return True
+    for pattern in _NOISE_TEXT_PATTERNS:
+        if pattern.match(value):
+            return True
+    return False
+
+
+def _normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    value = html_lib.unescape(text).replace("\u00a0", " ")
+    value = re.sub(r"[\u200b\u200c\u200d\u2060]", "", value)
+    value = re.sub(r"[\s\u3000]+", " ", value)
+    value = re.sub(r"\s*\n\s*", " ", value)
+    value = re.sub(r"\s{2,}", " ", value)
+    value = re.sub(fr"([{_CJK_CHAR_PATTERN}])\s+([{_CJK_CHAR_PATTERN}])", r"\1\2", value)
+    value = re.sub(fr"([{_CJK_CHAR_PATTERN}])\s+([，。！？；：、）】》”’])", r"\1\2", value)
+    value = re.sub(fr"([，。！？；：、])\s+([{_CJK_CHAR_PATTERN}])", r"\1\2", value)
+    value = re.sub(fr"([（【《“‘])\s+([{_CJK_CHAR_PATTERN}])", r"\1\2", value)
+    value = re.sub(r"([“‘])\s+", r"\1", value)
+    value = re.sub(r"\s+([”’])", r"\1", value)
+    value = re.sub(fr"([”’])\s+([{_CJK_CHAR_PATTERN}])", r"\1\2", value)
+    value = re.sub(r"\s+([,.;:!?%])", r"\1", value)
+    value = re.sub(r"\(\s+", "(", value)
+    value = re.sub(r"\s+\)", ")", value)
+    return value.strip()
+
+
+def _has_hidden_style(style_text: str) -> bool:
+    style = (style_text or "").replace(" ", "").lower()
+    return ("display:none" in style) or ("visibility:hidden" in style)
+
+
+def _is_noise_node(tag: Tag) -> bool:
+    attrs = " ".join(
+        [
+            tag.get("id", "") or "",
+            " ".join(tag.get("class", []) or []),
+            tag.get("role", "") or "",
+            tag.get("data-role", "") or "",
+        ]
+    ).lower()
+    return any(keyword in attrs for keyword in _NOISE_ID_CLASS_KEYWORDS)
+
+
+def _pick_main_content_node(soup: BeautifulSoup) -> Tag | None:
+    best_node = None
+    best_score = 0
+    for selector in _MAIN_CONTENT_SELECTORS:
+        for node in soup.select(selector):
+            if not isinstance(node, Tag):
+                continue
+            text_len = len((node.get_text(" ", strip=True) or "").strip())
+            if text_len > best_score:
+                best_score = text_len
+                best_node = node
+    return best_node
+
+
+def _cleanup_content_node(content_node: Tag) -> None:
+    for comment in content_node.find_all(string=lambda t: isinstance(t, Comment)):
+        comment.extract()
+
+    for tag_name in _DROP_TAGS:
+        for node in content_node.find_all(tag_name):
+            node.decompose()
+
+    for node in content_node.find_all(True):
+        if not isinstance(node, Tag):
+            continue
+        if _is_noise_node(node):
+            node.decompose()
+            continue
+        if node.get("aria-hidden") == "true" or _has_hidden_style(node.get("style", "")):
+            node.decompose()
+
+
+def _build_semantic_html(content_node: Tag, article_url: str = "") -> str:
+    semantic = BeautifulSoup("<div id='js_content'></div>", "html.parser")
+    root = semantic.div
+
+    block_tags = ("h1", "h2", "h3", "h4", "h5", "h6", "p", "blockquote", "pre", "figcaption", "img")
+    heading_tags = {"h1", "h2", "h3", "h4", "h5", "h6"}
+
+    for element in content_node.find_all(block_tags):
+        if not isinstance(element, Tag):
+            continue
+
+        if element.name == "img":
+            source = element.get("src") or element.get("data-src") or ""
+            source = _normalize_image_url(source, article_url)
+            if not source:
+                continue
+            wrapper = semantic.new_tag("p")
+            image = semantic.new_tag("img", src=source)
+            wrapper.append(image)
+            root.append(wrapper)
+            continue
+
+        text_value = _normalize_text(element.get_text(" ", strip=True))
+        if not text_value or _is_noise_text(text_value):
+            continue
+
+        tag_name = element.name if element.name in heading_tags else "p"
+        tag = semantic.new_tag(tag_name)
+        tag.string = text_value
+        root.append(tag)
+
+    if root and root.find():
+        return str(root)
+
+    fallback_text = _normalize_text(content_node.get_text("\n", strip=True))
+    if fallback_text:
+        fallback = BeautifulSoup("<div id='js_content'></div>", "html.parser")
+        paragraph = fallback.new_tag("p")
+        paragraph.string = fallback_text
+        fallback.div.append(paragraph)
+        return str(fallback.div)
+
+    return ""
+
+
+def _extract_article_html(content_html: str, article_url: str = "") -> str:
+    if not content_html:
+        return ""
+
+    try:
+        soup = BeautifulSoup(content_html, "html.parser")
+    except Exception:
+        return content_html
+
+    content_node = _pick_main_content_node(soup)
+    if not content_node:
+        return content_html
+
+    cloned = BeautifulSoup(str(content_node), "html.parser")
+    wrapper = cloned.find(True)
+    if not isinstance(wrapper, Tag):
+        return content_html
+
+    _cleanup_content_node(wrapper)
+    semantic_html = _build_semantic_html(wrapper, article_url)
+    return semantic_html or str(wrapper)
+
+
+def _is_markdown_control_line(line: str) -> bool:
+    value = (line or "").strip()
+    if not value:
+        return False
+    if value in {"---", "***", "___"}:
+        return True
+    if value.startswith(("```", "#", "![", "> ", "| ")):
+        return True
+    if re.match(r"^[-*+]\s+", value):
+        return True
+    if re.match(r"^\d+\.\s+", value):
+        return True
+    return False
+
+
+def _postprocess_markdown(markdown: str, title: str) -> str:
+    if not markdown:
+        return ""
+
+    lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    cleaned: List[str] = []
+    dropped_title = False
+    clean_title = _normalize_text(title)
+
+    for raw in lines:
+        line = _normalize_text(raw)
+        if not line:
+            if not cleaned or cleaned[-1] == "":
+                continue
+            cleaned.append("")
+            continue
+        if any(pattern.match(line) for pattern in _TRAILING_CUTOFF_PATTERNS):
+            break
+        if _is_noise_text(line):
+            continue
+        if clean_title and not dropped_title and line.lstrip("# ").strip() == clean_title:
+            dropped_title = True
+            continue
+        cleaned.append(line)
+
+    merged: List[str] = []
+    buffer = ""
+
+    for line in cleaned:
+        if not line:
+            if buffer:
+                merged.append(_normalize_text(buffer))
+                buffer = ""
+            if not merged or merged[-1] == "":
+                continue
+            merged.append("")
+            continue
+
+        if _is_markdown_control_line(line):
+            if buffer:
+                merged.append(_normalize_text(buffer))
+                buffer = ""
+            merged.append(line)
+            continue
+
+        buffer = _normalize_text(f"{buffer} {line}") if buffer else line
+
+    if buffer:
+        merged.append(_normalize_text(buffer))
+
+    while merged and merged[-1] == "":
+        merged.pop()
+
+    return "\n".join(merged).strip()
 
 
 def _safe_component(value: Any, fallback: str) -> str:
@@ -244,16 +533,18 @@ def export_article_markdown(
 
     markdown_path = target_dir / f"{file_stem}.md"
     images_dir = target_dir / f"{file_stem}_images"
+    normalized_html = _extract_article_html(content_html, article_url) or content_html
+    clean_title = (title or "").strip() or "未命名文章"
 
     try:
-        markdown = _to_markdown(content_html)
+        markdown = _to_markdown(normalized_html)
     except Exception as exc:
         print_warning(f"MarkItDown 转换失败: {exc}")
         return None
 
-    image_map = _download_images(content_html, images_dir, article_url)
+    image_map = _download_images(normalized_html, images_dir, article_url)
+    markdown = _postprocess_markdown(markdown, clean_title)
     markdown = _replace_markdown_image_links(markdown, image_map)
-    clean_title = (title or "").strip() or "未命名文章"
     clean_url = (article_url or "").strip()
     if clean_url:
         markdown = f"# {clean_title}\n\n原文链接：{clean_url}\n\n{markdown.strip()}\n"

@@ -175,8 +175,12 @@ class Db:
                             from core.article_markdown_export import export_article_markdown
                             feed = session.query(Feed.mp_name).filter(Feed.id == art.mp_id).first()
                             mp_name = (feed[0] if feed else "") or str(art.mp_id or "")
+                            export_source_html = (
+                                str(art.content_html or "").strip()
+                                or str(art.content or "").strip()
+                            )
                             export_article_markdown(
-                                content_html=str(art.content),
+                                content_html=export_source_html,
                                 mp_name=mp_name,
                                 title=str(art.title or "未命名文章"),
                                 publish_time=art.publish_time,
@@ -218,8 +222,12 @@ class Db:
                     from core.article_markdown_export import export_article_markdown
                     feed = session.query(Feed.mp_name).filter(Feed.id == art.mp_id).first()
                     mp_name = (feed[0] if feed else "") or str(art.mp_id or "")
+                    export_source_html = (
+                        str(art.content_html or "").strip()
+                        or str(art.content or "").strip()
+                    )
                     export_article_markdown(
-                        content_html=str(art.content),
+                        content_html=export_source_html,
                         mp_name=mp_name,
                         title=str(art.title or "未命名文章"),
                         publish_time=art.publish_time,

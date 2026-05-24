@@ -142,8 +142,12 @@ def sync_article_content(
             mp_name = ""
 
         try:
+            export_source_html = (
+                (getattr(article, "content_html", "") or "").strip()
+                or (getattr(article, "content", "") or "").strip()
+            )
             export_article_markdown(
-                content_html=article.content,
+                content_html=export_source_html,
                 mp_name=mp_name or getattr(article, "mp_id", "") or "未知公众号",
                 title=getattr(article, "title", "") or "未命名文章",
                 publish_time=getattr(article, "publish_time", None),

@@ -237,9 +237,9 @@ def export_article_markdown(
     publish_date = _format_publish_date(publish_time)
     safe_mp_name = _safe_component(mp_name, "未知公众号")
     safe_title = _safe_component(title, "未命名文章")
-    file_stem = f"{safe_mp_name}-{publish_date}-{safe_title}"
+    file_stem = f"{safe_mp_name}_{publish_date}_{safe_title}"
 
-    target_dir = Path(root_dir) / safe_mp_name / publish_date
+    target_dir = Path(root_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     markdown_path = target_dir / f"{file_stem}.md"
@@ -253,6 +253,12 @@ def export_article_markdown(
 
     image_map = _download_images(content_html, images_dir, article_url)
     markdown = _replace_markdown_image_links(markdown, image_map)
+    clean_title = (title or "").strip() or "未命名文章"
+    clean_url = (article_url or "").strip()
+    if clean_url:
+        markdown = f"# {clean_title}\n\n原文链接：{clean_url}\n\n{markdown.strip()}\n"
+    else:
+        markdown = f"# {clean_title}\n\n{markdown.strip()}\n"
     markdown_path.write_text(markdown, encoding="utf-8")
 
     if image_map:

@@ -13,6 +13,23 @@ docker run -d  --name we-mp-rss  -p 8001:8001 -v ./data:/app/data  ghcr.io/rache
 ```
 http://<您的ip>:8001/  即可开启
 
+# 本地构建版（含 HTML 转 Markdown 导出）
+
+当你需要使用本地分支中的最新功能（例如文章正文补抓后自动导出 Markdown 与图片）时，推荐使用 SQLite Compose 配置启动：
+
+```bash
+cd /Users/chenjunxi/DEV/we-mp-rss-md
+docker build -t we-mp-rss:markitdown .
+WE_MPRSS_DATA_DIR=/Users/chenjunxi/DEV/docker/we-mp-rss-data \
+docker compose -f compose/docker-compose-sqlite.yaml up -d
+```
+
+说明：
+- `compose/we-mp-rss.config.yaml` 已内置正文自动补抓和 Markdown 导出配置。
+- Markdown 默认输出目录：`/app/data/markdown`（宿主机对应 `WE_MPRSS_DATA_DIR/markdown`）。
+- Markdown 命名规则：`公众号_日期_文章名称.md`，图片保存到同名 `_images` 文件夹。
+- 每个 Markdown 文件顶部会附带原文链接。
+
 # 快速升级 
 
 ```

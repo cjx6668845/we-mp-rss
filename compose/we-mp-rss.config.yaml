@@ -1,0 +1,24 @@
+app_name: we-mp-rss
+db: sqlite:///./data/db.db
+port: 8001
+
+server:
+  enable_job: true
+  auto_reload: false
+  threads: 1
+
+gather:
+  # 首轮只采集文章列表，正文由自动补抓任务处理
+  content: false
+  # 开启自动补抓正文
+  content_auto_check: true
+  # 每 1 分钟补抓一次，避免启动后长时间不触发
+  content_auto_interval: 1
+  # 优先使用 api 模式，减少 web 模式超时
+  content_mode: api
+  clean_html: false
+
+export:
+  markdown:
+    enable: true
+    dir: ./data/markdown

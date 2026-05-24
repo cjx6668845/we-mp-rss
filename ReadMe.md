@@ -13,6 +13,23 @@ docker run -d  --name we-mp-rss  -p 8001:8001 -v ./data:/app/data  ghcr.io/rache
 ```
 Visit http://<your-ip>:8001/ to get started
 
+# Local Build (with HTML -> Markdown export)
+
+If you want to run the latest local branch features (for example: auto-fetch article HTML, then export Markdown + images), use the SQLite Compose profile:
+
+```bash
+cd /Users/chenjunxi/DEV/we-mp-rss-md
+docker build -t we-mp-rss:markitdown .
+WE_MPRSS_DATA_DIR=/Users/chenjunxi/DEV/docker/we-mp-rss-data \
+docker compose -f compose/docker-compose-sqlite.yaml up -d
+```
+
+Notes:
+- `compose/we-mp-rss.config.yaml` already includes default content auto-fix and Markdown export settings.
+- Default Markdown output directory: `/app/data/markdown` (host path: `WE_MPRSS_DATA_DIR/markdown`).
+- Markdown filename format: `mpName_date_articleTitle.md`, images go into a matching `_images` folder.
+- The original article URL is included at the top of each Markdown file.
+
 # Quick Upgrade 
 
 ```
@@ -259,7 +276,6 @@ The following are the environment variable configurations supported in `config.y
 | `LOG_FILE` | Empty | Log file path |
 | `LOG_LEVEL` | `INFO` | Log level |
 | `EXPORT_PDF` | `False` | Whether to enable PDF export functionality |
-
 
 
 

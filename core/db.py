@@ -170,6 +170,20 @@ class Db:
                         art.has_content = 1 if (art.content and art.content.strip()) else 0 # type: ignore
                     session.merge(art)  # 使用 merge 来更新现有记录
                     session.commit()
+                    if art.content and str(art.content).strip():
+                        try:
+                            from core.article_markdown_export import export_article_markdown
+                            feed = session.query(Feed.mp_name).filter(Feed.id == art.mp_id).first()
+                            mp_name = (feed[0] if feed else "") or str(art.mp_id or "")
+                            export_article_markdown(
+                                content_html=str(art.content),
+                                mp_name=mp_name,
+                                title=str(art.title or "未命名文章"),
+                                publish_time=art.publish_time,
+                                article_url=str(art.url or ""),
+                            )
+                        except Exception as export_exc:
+                            print_warning(f"导出Markdown失败(不影响入库): {export_exc}")
                     print_warning(f"Article already exists: {art.id}")
                     print_info(f"Updated article (CHECK_EXIST): {art.id} (newer publish_time)")
                     return False
@@ -199,6 +213,20 @@ class Db:
             session.add(art)
             print_info(f"Added article: {art.id}")
             sta=session.commit()
+            if art.content and str(art.content).strip():
+                try:
+                    from core.article_markdown_export import export_article_markdown
+                    feed = session.query(Feed.mp_name).filter(Feed.id == art.mp_id).first()
+                    mp_name = (feed[0] if feed else "") or str(art.mp_id or "")
+                    export_article_markdown(
+                        content_html=str(art.content),
+                        mp_name=mp_name,
+                        title=str(art.title or "未命名文章"),
+                        publish_time=art.publish_time,
+                        article_url=str(art.url or ""),
+                    )
+                except Exception as export_exc:
+                    print_warning(f"导出Markdown失败(不影响入库): {export_exc}")
             return True
         except Exception as e:
             if session:

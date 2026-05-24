@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any, Tuple
 
 from core.config import cfg
+from core.article_markdown_export import export_article_markdown
 from core.models.base import DATA_STATUS
+from core.models.feed import Feed
 from core.print import print_info, print_warning
 
 
@@ -130,6 +132,26 @@ def sync_article_content(
             article.fix_fail_count = 0
         session.commit()
         session.refresh(article)
+
+        mp_name = ""
+        try:
+            feed = session.query(Feed.mp_name).filter(Feed.id == getattr(article, "mp_id", "")).first()
+            if feed:
+                mp_name = feed[0] or ""
+        except Exception:
+            mp_name = ""
+
+        try:
+            export_article_markdown(
+                content_html=article.content,
+                mp_name=mp_name or getattr(article, "mp_id", "") or "未知公众号",
+                title=getattr(article, "title", "") or "未命名文章",
+                publish_time=getattr(article, "publish_time", None),
+                article_url=article_url,
+            )
+        except Exception as export_exc:
+            print_warning(f"导出Markdown失败(不影响入库): {export_exc}")
+
         print_info(f"article {article.id} content synced via {mode}")
         return True, mode
     except Exception:

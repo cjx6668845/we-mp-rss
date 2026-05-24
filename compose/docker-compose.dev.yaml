@@ -48,7 +48,7 @@ services:
       - ../init_sys.py:/app/init_sys.py
       - ../data_sync.py:/app/data_sync.py
       - ../job.py:/app/job.py
-      - ../data:/app/data
+      - ${WE_MPRSS_DATA_DIR:-../data}:/app/data
     depends_on:
       redis:
         condition: service_healthy
@@ -74,6 +74,8 @@ services:
     build:
       context: ..
       dockerfile: web_ui/Dockerfile.dev
+      args:
+        NODE_IMAGE: ${WE_MPRSS_FRONTEND_NODE_IMAGE:-m.daocloud.io/library/node:20-slim}
     image: we-mp-rss-frontend:dev
     container_name: we-mp-rss-frontend-dev
     restart: unless-stopped

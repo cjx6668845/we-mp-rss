@@ -1,17 +1,17 @@
-version: '3.9'
 services:
   we-mp-rss:
-    image: ghcr.io/rachelos/we-mp-rss:latest
+    image: ${WE_MPRSS_IMAGE:-we-mp-rss:markitdown}
     container_name: we-mp-rss
     restart: unless-stopped
     ports:
       - "8001:8001"
     environment:
-      - DB=sqlite:///data/we_mp_rss.db
-      - USERNAME=admin
-      - PASSWORD=admin@123
+      - USERNAME=${WE_MPRSS_USERNAME:-admin}
+      - PASSWORD=${WE_MPRSS_PASSWORD:-admin@123}
+      - TZ=${TZ:-Asia/Shanghai}
     volumes:
-      - ./data:/app/data
+      - ${WE_MPRSS_DATA_DIR:-../data}:/app/data
+      - ${WE_MPRSS_CONFIG_FILE:-./we-mp-rss.config.yaml}:/app/config.yaml:ro
 
 volumes:
   db_data:

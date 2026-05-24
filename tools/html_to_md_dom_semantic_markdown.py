@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Convert article HTML from SQLite to Markdown via dom-to-semantic-markdown."""
+
+import argparse
+import json
+import re
+import shlex
+import sqlite3
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+from typing import Dict, List
+
+DEFAULT_DB_PATH = "/Users/chenjunxi/DEV/docker/we-mp-rss/data/db.db"
+DEFAULT_OUT_DIR = "./data/md_compare/dom_to_semantic_markdown"
+DEFAULT_D2M_CMD = "npx -y d2m@1.5.0"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--db", default=DEFAULT_DB_PATH, help="SQLite db path")
+    parser.add_argument("--article-id", default="", help="specific article id")
+    parser.add_argument("--limit", type=int, default=3, help="latest N articles when article-id is empty")
+    parser.add_argument(
+        "--prefer-content",
+        choices=["html", "raw"],
+        default="html",
+        help="html=content_html first, raw=content first",
+    )
+    parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="output directory")
+    parser.add_argument(
+        "--d2m-cmd",
+        default=DEFAULT_D2M_CMD,
+        help="CLI command for d2m (default: npx -y d2m@1.5.0)",
+    )
+    return parser.parse_args()
+
+
+def safe_name(value: str) -> str:
+    return re.sub(r"[^0-9A-Za-z._-]+", "_", value).strip("_") or "untitled"
+
+
+def fetch_articles(conn: sqlite3.Connection, article_id: str, limit: int, prefer_content: str) -> List[Dict]:
+    content_expr = "coalesce(content_html, content, '')" if prefer_content == "html" else "coalesce(content, content_html, '')"
+    if article_id:
+        rows = conn.execute(
+            f"""
+            select id, title, mp_id, url, publish_time, {content_expr} as html
+            from articles
+            where id = ? and {content_expr} != ''
+            """,
+            (article_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"""
+            select id, title, mp_id, url, publish_time, {content_expr} as html
+            from articles
+            where {content_expr} != ''
+            order by publish_time desc
+            limit ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "title": row[1] or "",
+            "mp_id": row[2] or "",
+            "url": row[3] or "",
+            "publish_time": int(row[4] or 0),
+            "html": row[5] or "",
+        }
+        for row in rows
+    ]
+
+
+def convert_html_to_markdown(html: str, d2m_cmd: str) -> str:
+    base_cmd = shlex.split(d2m_cmd)
+    if not base_cmd:
+        raise ValueError("d2m command is empty")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        in_file = Path(tmp_dir) / "input.html"
+        out_file = Path(tmp_dir) / "output.md"
+        in_file.write_text(html, encoding="utf-8")
+
+        cmd = [*base_cmd, "-i", str(in_file), "-o", str(out_file)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            stderr = (proc.stderr or "").strip()
+            stdout = (proc.stdout or "").strip()
+            raise RuntimeError(f"d2m failed ({proc.returncode}): {stderr or stdout}")
+        if not out_file.exists():
+            raise RuntimeError("d2m did not generate output file")
+        return out_file.read_text(encoding="utf-8").strip()
+
+
+def build_metrics(markdown: str, html: str, elapsed_ms: float) -> Dict:
+    lines = markdown.splitlines()
+    return {
+        "elapsed_ms": round(elapsed_ms, 2),
+        "input_chars": len(html),
+        "output_chars": len(markdown),
+        "line_count": len(lines),
+        "heading_count": sum(1 for line in lines if line.lstrip().startswith("#")),
+        "image_count": markdown.count("!["),
+        "link_count": markdown.count("]("),
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = sqlite3.connect(args.db)
+    conn.row_factory = sqlite3.Row
+    try:
+        articles = fetch_articles(conn, args.article_id.strip(), args.limit, args.prefer_content)
+    finally:
+        conn.close()
+
+    if not articles:
+        print("No article with HTML content found.")
+        return 1
+
+    summary = []
+
+    for article in articles:
+        start = time.perf_counter()
+        markdown = convert_html_to_markdown(article["html"], args.d2m_cmd)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        metrics = build_metrics(markdown, article["html"], elapsed_ms)
+
+        base_name = safe_name(f"{article['id']}_{article['title'][:40]}")
+        md_file = out_dir / f"{base_name}.md"
+        md_file.write_text(markdown, encoding="utf-8")
+
+        item = {
+            "engine": "dom_to_semantic_markdown",
+            "article_id": article["id"],
+            "title": article["title"],
+            "mp_id": article["mp_id"],
+            "url": article["url"],
+            "publish_time": article["publish_time"],
+            "markdown_file": str(md_file),
+            "d2m_cmd": args.d2m_cmd,
+            **metrics,
+        }
+        summary.append(item)
+        print(json.dumps(item, ensure_ascii=False))
+
+    summary_path = out_dir / "summary.json"
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Saved summary: {summary_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
